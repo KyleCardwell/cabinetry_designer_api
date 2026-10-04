@@ -1,62 +1,35 @@
 # Cabinetry Designer — API
 
-Node.js/Express backend that manages projects, rooms, walls, and placed objects. Resolves parametric fallback chains, orchestrates Python geometry engine calls, and serves manufacturing reports.
-
-## Tech Stack
-
-- **Express** — HTTP server
-- **Supabase** — Postgres DB + Storage + Auth verification
-- **Zod** — Request validation
-- **Child Process** — Spawns Python geometry engine via CLI
+Express backend for the cabinetry designer. It verifies the designer's Supabase login using the project's anon key. Drawing payloads will be turned into DXFs through the Python geometry engine when the drawing preview route is added in step 310. Reports and saved revisions come later.
 
 ## Getting Started
 
 ```bash
-# Install dependencies
 npm install
-
-# Copy env and fill in values
 cp .env.example .env
+```
 
-# Start dev server (port 3001, auto-restart on changes)
+Fill in `SUPABASE_URL` and `SUPABASE_ANON_KEY` in `.env` with the same values as `VITE_FF_JS_SUPABASE_URL` and `VITE_FF_JS_SUPABASE_ANON_KEY` in `cabinetry_designer/.env`.
+
+```bash
 npm run dev
 ```
+
+The API starts on port 3001 by default and restarts when files change.
 
 ## Environment Variables
 
 | Variable | Description |
 |---|---|
-| `PORT` | Server port (default: 3001) |
-| `SUPABASE_URL` | Supabase project URL |
-| `SUPABASE_SERVICE_ROLE_KEY` | Service role key (bypasses RLS) |
-| `SUPABASE_ANON_KEY` | Anon key (for user-scoped clients) |
-| `GEOMETRY_ENGINE_PATH` | Path to Python geometry engine repo |
-| `GEOMETRY_ENGINE_MODE` | `cli` or `http` |
+| `PORT` | Server port (default: `3001`) |
+| `SUPABASE_URL` | Required Supabase project URL, matching the designer |
+| `SUPABASE_ANON_KEY` | Required Supabase anon key, matching the designer; used to verify logins |
+| `GEOMETRY_ENGINE_PATH` | Geometry repository path (default: `../cabinetry_designer_geometry`, resolved from the working directory) |
+| `GEOMETRY_PYTHON` | Optional Python executable path (default: `$GEOMETRY_ENGINE_PATH/.venv/bin/python`) |
+| `GEOMETRY_TIMEOUT_MS` | Optional geometry command timeout in milliseconds (default: `30000`) |
 
 ## API Routes
 
 | Method | Path | Description |
 |---|---|---|
-| `GET` | `/api/health` | Health check (no auth) |
-| `GET` | `/api/projects?team_id=` | List team projects |
-| `POST` | `/api/projects` | Create project |
-| `GET` | `/api/rooms/:roomId` | Get room with walls + objects |
-| `POST` | `/api/rooms` | Create room |
-| `PUT` | `/api/walls/batch` | Bulk upsert walls |
-| `PUT` | `/api/objects/batch` | Bulk upsert objects |
-| `POST` | `/api/rooms/:roomId/generate` | Generate DXF + reports |
-| `GET` | `/api/rooms/:roomId/reports` | Quick reports (no DXF) |
-
-## Parameter Fallback Chain
-
-```
-object.params.{key}
-  → room.default_params.{key}
-    → project.default_params.{key}
-      → team_defaults.default_params.{key}
-        → SYSTEM_DEFAULTS[key]
-```
-
-## Database Migration
-
-Run `supabase/migrations/001_create_cd_tables.sql` against your Supabase project to create the `cd_*` tables with RLS policies.
+| `GET` | `/api/health` | Health check; no authentication required. Returns `status: "ok"` and a timestamp. |
