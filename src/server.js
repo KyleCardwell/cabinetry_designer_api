@@ -2,6 +2,8 @@ import express from 'express';
 import cors from 'cors';
 import { env } from './config/env.js';
 import { errorHandler } from './middleware/errorHandler.js';
+import { requireAuth } from './middleware/auth.js';
+import drawingRoutes from './routes/drawings.js';
 
 const app = express();
 
@@ -13,6 +15,8 @@ app.use(express.json({ limit: '5mb' }));
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
+
+app.use('/api/drawings', requireAuth, drawingRoutes);
 
 // Error handler (must be last)
 app.use(errorHandler);

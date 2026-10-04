@@ -1,6 +1,6 @@
 # Cabinetry Designer — API
 
-Express backend for the cabinetry designer. It verifies the designer's Supabase login using the project's anon key. Drawing payloads will be turned into DXFs through the Python geometry engine when the drawing preview route is added in step 310. Reports and saved revisions come later.
+Express backend for the cabinetry designer. It verifies the designer's Supabase login using the project's anon key and turns drawing payloads into zipped DXFs through the Python geometry engine. Reports and saved revisions come later.
 
 ## Getting Started
 
@@ -33,3 +33,23 @@ The API starts on port 3001 by default and restarts when files change.
 | Method | Path | Description |
 |---|---|---|
 | `GET` | `/api/health` | Health check; no authentication required. Returns `status: "ok"` and a timestamp. |
+| `POST` | `/api/drawings/preview` | Requires a Bearer token. Accepts a drawing payload v1 and returns an `application/zip` attachment with `Content-Disposition` and `X-Drawing-Files` headers. |
+
+Create the geometry virtualenv before exporting drawings (from the geometry repository):
+
+```bash
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt
+```
+
+Save a drawing payload v1 as `payload.json`, then use the designer's Supabase access token:
+
+```bash
+curl --fail-with-body -X POST http://localhost:3001/api/drawings/preview \
+  -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" \
+  -H 'Content-Type: application/json' \
+  --data-binary @payload.json \
+  --output g1-euro-kitchen.zip
+```
+
+The response names the zip after the room (for example, `g1-euro-kitchen.zip`). `X-Drawing-Files` lists the DXF names, separated by commas. Invalid payloads return `400` for the API's light schema check or `422` with geometry's validation details; engine failures return `502`, and timeouts return `504`.

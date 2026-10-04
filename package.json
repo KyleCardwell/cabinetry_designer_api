@@ -5,7 +5,8 @@
   "scripts": {
     "dev": "node --watch src/server.js",
     "start": "node src/server.js",
-    "lint": "eslint src/"
+    "lint": "eslint src/",
+    "test": "node --test test/*.test.js"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.46.0",
