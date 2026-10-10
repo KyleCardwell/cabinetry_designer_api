@@ -1,6 +1,6 @@
 # Working rules for Codex
 
-Specs live outside this repo, in `../specs/` (not in git). Each prompt names one step of one SPEC.
+Specs live in the `specs` repo, cloned beside this one as `../specs/` (see its README). Each prompt names one step of one SPEC.
 
 - Read the SPEC's **§1 Decisions** and **your step** only. Don't open other SPECs or `../specs/archive/`.
 - Start with `git status`. If it isn't clean, stop and tell Kyle.
