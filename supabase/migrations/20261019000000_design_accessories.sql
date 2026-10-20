@@ -2,10 +2,11 @@
 --
 -- Adds design_accessories: the cabinet accessories the designer places in interiors
 -- (INTERIORS-PLAN ID22): section fills (organizers, inserts, closet items) and accessories
--- that live on a drawer box (a charging unit). The estimator's accessories_catalog is NOT
--- changed. It keeps its items for pricing; a design accessory may point at the one it is
--- priced as (accessory_catalog_id). Later, once the designer and estimator are connected,
--- the estimator moves onto design_accessories (same path as pulls and slides).
+-- that live on a drawer box (a charging unit). The estimator's accessories_catalog and
+-- accessory_time_anchors are NOT changed and NOT linked: a design accessory carries its own
+-- pricing and labour in data (Kyle 2026-10-19: designer libraries are their own, more detailed
+-- tables). Later, once the designer and estimator are connected, the estimator moves onto
+-- design_accessories.
 --
 -- Same rules as the other library tables (20261014000000_design_tables.sql, ..._design_pulls.sql,
 -- ..._design_slides.sql):
@@ -24,7 +25,11 @@
 --     minOpening: { width, depth, height },  -- each a number or null
 --     ownSlides,                             -- boolean: brings its own slides
 --     effects: [],                           -- fixed vocabulary, IN12c
---     price, actualCost }                    -- per unit, number or null
+--     pricing: 'unit' | 'area' | 'length' | 'perimeter' | 'volume',   -- as calculation_type
+--     price, actualCost,                     -- per pricing unit, number or null
+--     labor: { "<team_service_id>": minutes per pricing unit } }
+--   labor keys are team_services ids (the shop's services). No foreign key: a deleted service
+--   just leaves a key the designer ignores and flags.
 --
 -- Run the whole file once in the Supabase SQL editor (one transaction). Safe to re-run.
 
@@ -35,27 +40,22 @@ begin;
 -- =======================================================================================
 
 create table if not exists public.design_accessories (
-  accessory_id          uuid primary key default public.design_uuidv7(),
-  team_id               uuid not null references public.teams (team_id) on delete restrict,
-  name                  text not null check (trim(name) <> ''),
-  data                  jsonb not null check (jsonb_typeof(data) = 'object'),
-  -- The estimator accessory this one is priced as. The estimator still hard-deletes its
-  -- catalog items, so a delete there just clears the link.
-  accessory_catalog_id  bigint references public.accessories_catalog (id) on delete set null,
-  version               int not null default 1,
-  sort                  int not null default 0,
-  created_by            uuid,
-  created_at            timestamptz not null default now(),
-  updated_by            uuid,
-  updated_at            timestamptz not null default now(),
-  archived_at           timestamptz
+  accessory_id   uuid primary key default public.design_uuidv7(),
+  team_id        uuid not null references public.teams (team_id) on delete restrict,
+  name           text not null check (trim(name) <> ''),
+  data           jsonb not null check (jsonb_typeof(data) = 'object'),
+  version        int not null default 1,
+  sort           int not null default 0,
+  created_by     uuid,
+  created_at     timestamptz not null default now(),
+  updated_by     uuid,
+  updated_at     timestamptz not null default now(),
+  archived_at    timestamptz
 );
 create index if not exists design_accessories_team_idx on public.design_accessories (team_id, sort);
 create unique index if not exists design_accessories_name_idx
   on public.design_accessories (team_id, lower(trim(name)))
   where archived_at is null;
-create index if not exists design_accessories_catalog_idx
-  on public.design_accessories (accessory_catalog_id) where accessory_catalog_id is not null;
 
 -- =======================================================================================
 -- 2. RLS: select only
@@ -74,19 +74,17 @@ revoke all on public.design_accessories from anon;
 -- 3. RPCs
 -- =======================================================================================
 
--- Same contract as save_pull / save_slide: p_expected_version = 0 inserts (p_accessory_id
--- optional; JS may supply its own uuid); otherwise updates that accessory if the version
--- matches. Null p_sort = end of list / unchanged. p_accessory_catalog_id is written as given
--- (null clears it) and must be one of the team's estimator accessories. A live accessory with
--- the same name (ignoring case and outer spaces) raises 23505.
+-- Same contract as save_pull / save_slide (without an estimator link): p_expected_version = 0
+-- inserts (p_accessory_id optional; JS may supply its own uuid); otherwise updates that
+-- accessory if the version matches. Null p_sort = end of list / unchanged. A live accessory
+-- with the same name (ignoring case and outer spaces) raises 23505.
 create or replace function public.save_accessory(
-  p_team_id               uuid,
-  p_accessory_id          uuid,
-  p_name                  text,
-  p_data                  jsonb,
-  p_accessory_catalog_id  bigint,
-  p_sort                  int,
-  p_expected_version      int
+  p_team_id           uuid,
+  p_accessory_id      uuid,
+  p_name              text,
+  p_data              jsonb,
+  p_sort              int,
+  p_expected_version  int
 )
 returns jsonb
 language plpgsql
@@ -100,21 +98,13 @@ begin
   perform public.design_require(p_team_id, 'can_manage_teams');
   perform public.design_required_object(p_data, 'Accessory data');
 
-  if p_accessory_catalog_id is not null and not exists (
-    select 1 from public.accessories_catalog ac
-    where ac.id = p_accessory_catalog_id and ac.team_id = p_team_id
-  ) then
-    raise exception 'Estimating accessory not found' using errcode = 'P0002';
-  end if;
-
   if p_expected_version = 0 then
     insert into public.design_accessories
-      (accessory_id, team_id, name, data, accessory_catalog_id, sort, created_by, updated_by)
+      (accessory_id, team_id, name, data, sort, created_by, updated_by)
     values (
       coalesce(p_accessory_id, public.design_uuidv7()), p_team_id,
       public.design_required_text(p_name, 'Accessory name'),
       p_data,
-      p_accessory_catalog_id,
       coalesce(p_sort, (select coalesce(max(sort) + 1, 0) from public.design_accessories
                         where team_id = p_team_id)),
       v_uid, v_uid
@@ -127,7 +117,6 @@ begin
   update public.design_accessories set
     name = public.design_required_text(p_name, 'Accessory name'),
     data = p_data,
-    accessory_catalog_id = p_accessory_catalog_id,
     sort = coalesce(p_sort, sort),
     version = version + 1, updated_by = v_uid, updated_at = now()
   where accessory_id = p_accessory_id and team_id = p_team_id and version = p_expected_version
@@ -206,8 +195,8 @@ begin
 end;
 $$;
 
-revoke all on function public.save_accessory(uuid, uuid, text, jsonb, bigint, int, int) from public, anon;
-grant execute on function public.save_accessory(uuid, uuid, text, jsonb, bigint, int, int) to authenticated;
+revoke all on function public.save_accessory(uuid, uuid, text, jsonb, int, int) from public, anon;
+grant execute on function public.save_accessory(uuid, uuid, text, jsonb, int, int) to authenticated;
 revoke all on function public.archive_library_item(text, uuid, boolean) from public, anon;
 grant execute on function public.archive_library_item(text, uuid, boolean) to authenticated;
 
@@ -228,10 +217,10 @@ commit;
 -- c) In the designer browser console, signed in as a team manager:
 --      await supabase.rpc('save_accessory', { p_team_id: '<team id>', p_accessory_id: null,
 --        p_name: 'Test accessory', p_data: { attachesTo: 'section' },
---        p_accessory_catalog_id: null, p_sort: null, p_expected_version: 0 })
+--        p_sort: null, p_expected_version: 0 })
 --    -> { ok: true, accessory_id, version: 1, ... }
 --      await supabase.rpc('archive_library_item', { p_kind: 'accessory', p_id: '<accessory_id>' })
 --    -> { ok: true }
 --
 -- d) Slides and pulls still archive: archive_library_item('slide' / 'pull', ...) as before.
--- e) The estimator's Accessories settings still list, add, edit and delete items as before.
+-- e) The estimator's Accessories settings (and their time anchors) still work as before.
